@@ -1,6 +1,5 @@
-#This script is used to read the data from differen academic journals
-# the format is defined in the journal class
-#CJC Rev A 2016/02/01
+#This script is used to read the data from the SA Health Site
+#CJC Rev A 2017/04/12
 
 install.packages("networkD3")
 install.packages("extrafont")
@@ -12,6 +11,7 @@ install.packages("rvest")
 install.packages("pipeR")
 install.packages("dplyr")
 install.packages("XML")
+install.packages('leaflet')
 
 
 require(rvest)
@@ -32,6 +32,7 @@ require(plotly)
 library(magrittr)
 library(extrafont)
 font_import()
+library(doParallel)
 
 #open up the user specific functions defined in functions.R- this has definitions of the web page format etc.
 source('./functions.R')
@@ -45,102 +46,110 @@ getDoParWorkers()
 mcoptions <- list(preschedule=FALSE, set.seed=FALSE)
 getDoParName()
 
-#First we ppopulate the websites for the different journals
-#----------------------------------------------------------------------
 
 
-setClass("Journal",
-         slots = list(base = "character", extension= "character",nextIssue = "character", abstract="character", 
-                      metaNodes= "character", metaNames = "character", metaContent = "character", 
-                      authorNodes= "character",  authorSplit = "character", authorExtractString = "character",authorAffiliationIndex = "character",
-                      affiliationNodes = "character", affiliationSplit = "character", affiliationExtractString = "character", 
-                      authorSearch = "character", institutionSearch = "character",doiSearch = "character",dateSearch = "character",
-                      emailSearch = "character",websiteLayout = "character"))
-#decsription of Journal Layout
-#base - The base URL of the website
-#extension - the extension that is added to the base to get the URL of each of the journal volume abstract list
-#metaNodes - This is a node in the XML that is used for all the author names, affiliations etc. Only used for MNRAS, A&A in getData
-#metaNames - This is an attribute of the nodes that extracts the labels of each XML data field. Only used for MNRAS, A&A in getData
-#metaContent - This is an attribute of the nodes that extracts the content in each XML data field. Only used for MNRAS, A&A in getData
-#authorNodes
-#authorSplit
-#authorExtractString
-#affiliationNodes
-#affiliationSplit
-#affiliationExtractString
-#authorSearch
-#instiutionSearch
-#doiSearch
-#dateSearch
-#emailSearch
-#websiteLayout
+base <- "http://www.healthsites.org.za"
+startPages <- c("/clinics-in-western-cape.html",
+                "/clinics-in-eastern-cape.html",
+                "/clinics-in-free-state.html",
+                "/clinics-in-gauteng.html",
+                "/clinics-in-kwazulu-natal.html",
+                "/clinics-in-limpopo.html",
+                "/clinics-in-mpumalanga.html",
+                "/clinics-in-north-west.html",
+                "/clinics-in-northern-cape.html")
+
+patterns <- c("^/western-cape-.*html$",
+              "^/eastern-cape.*html$",
+              "^/free-state-.*.html$",
+              "^/gauteng-.*.html$",
+              "^/kwazulu-natal-.*.html$",
+              "^/limpopo-.*.html$",
+              "^/mpumalanga-.*.html$",
+              "^/north-west-.*.html$",
+              "^/northern-cape-.*.html$")
+URLlist=NULL
+for(i in 1:length(patterns)){
+  pageURL <- startPages[i]
+  webPage<-read_html(paste(base,pageURL,sep=""))
+  lastPageURL <- html_nodes(webPage,'a')[grep("Go to last page",html_nodes(webPage,'a'))] %>%html_attr("href")
+  while(length(pageURL)>0){
+    print(pageURL)
+    webPage<-read_html(paste(base,pageURL,sep=""))
+    URLs<-html_nodes(webPage,'a')%>%html_attr('href') %>% grep(patterns[i],.,value = TRUE)
+    pageURL <- html_nodes(webPage,'a')[grep("Go to next page",html_nodes(webPage,'a'))] %>%html_attr("href")
+    URLlist <- append(URLlist,URLs)
+  }
+}
+
+length(URLlist)
+facility.dataframe=NULL
+for(i in 1:length(URLlist)) {
+  testURL <- paste(base,URLlist[i],sep="")
+  fac_name <-NULL
+  category <-NULL
+  contact_details <-NULL
+  trading_hours <-NULL 
+  municipality<-NULL 
+  physical_address<-NULL 
+  gps_coords<-NULL
+  print(testURL)
+  print(i)
+  out <- tryCatch(
+    {
+      webPage<-read_html(testURL)
+      #facility name
+      fac_name <- html_nodes(webPage,'.page-title')%>%html_text()
+      #-category
+      html_nodes(webPage,'.field-name-field-category .field-label')%>%html_text
+      category <- html_nodes(webPage,'.field-name-field-category .field-item')%>%html_text
+      #-contact-dtails
+      html_nodes(webPage,'.field-name-field-contact-dtails .field-label')%>%html_text
+      contact_details <- html_nodes(webPage,'.field-name-field-contact-dtails .field-item')%>%
+        html_text
+      #trading hours
+      html_nodes(webPage,'.field-name-field-combined-trading-hours .field-label')%>%html_text
+      trading_hours <- html_nodes(webPage,'.field-name-field-combined-trading-hours .field-item')%>%
+        html_text
+      #municipality
+      html_nodes(webPage,'.field-name-field-combined-municipality .field-label')%>%html_text
+      municipality <- html_nodes(webPage,'.field-name-field-combined-municipality .field-item')%>%
+        html_text
+      #physical address
+      html_nodes(webPage,'.field-name-field-combined-location .field-label')%>%
+        html_text
+      physical_address <- html_nodes(webPage,'.field-name-field-combined-location .field-item')%>%
+        html_text%>%
+        paste(., collapse = ',')
+      #gps coords
+      html_nodes(webPage,'.field-name-field-combined-gps-coordinates .field-label')%>%
+        html_text
+      gps_coords <- html_nodes(webPage,'.field-name-field-combined-gps-coordinates .field-item')%>%
+        html_text
+      facility.data <- data.frame(fac_name, category, contact_details,trading_hours, municipality, physical_address, gps_coords, testURL)
+    },
+    error=function(cond) {
+      return(NA)
+    }
+  )
+    facility.data <- data.frame(fac_name, category, contact_details,trading_hours, municipality, physical_address, gps_coords, testURL)
+    facility.dataframe <- rbind(facility.dataframe,facility.data)
+}
+
+lat<-sapply(facility.dataframe$gps_coords, function(x) as.numeric(unlist(strsplit(as.character(x),','))[1]))
+lon<-sapply(facility.dataframe$gps_coords, function(x) as.numeric(unlist(strsplit(as.character(x),','))[2]))
 
 
-#header to define the mnras layout
-mnras <- new("Journal", base = "http://mnras.oxfordjournals.org/", extension = 'content/313/1.toc', nextIssue = 'Next issue', abstract = '*abstract*',
-             metaNodes= 'meta', metaNames = 'name', metaContent = 'content',
-             authorSearch = "^citation_author$",institutionSearch = "^citation_author_institution$", doiSearch="^citation_doi$",dateSearch="^citation_date$",
-             emailSearch = "^citation_author_email$")
+facility.dataframe$lon<-unlist(strsplit(as.character(facility.dataframe$gps_coords),','))[2]
 
-#header to define the Astronomy and Astrophysics layout
-astast <- new("Journal", base = "http://www.aanda.org/", extension = 'articles/aa/abs/2001/01/contents/contents.html', nextIssue = 'Next issue', 
-              abstract = '/aa/abs/.*aa.*\\.html$', metaNodes= 'meta', metaNames = 'name', metaContent = 'content',authorSearch = "^citation_author$",
-             institutionSearch = "^citation_author_institution$", doiSearch="^citation_doi$",dateSearch="^citation_publication_date$",
-             emailSearch = "^citation_author_email$")
-
-#header to define the ApJ
-astApj <- new("Journal", base = "http://iopscience.iop.org/", extension = '0004-637X/471/1', nextIssue = 'next issue', 
-              abstract = '/article/.*meta', metaNodes= 'meta', metaNames = 'name', metaContent = 'content',
-              authorNodes= ".mb-0, span", authorSplit = "span", authorExtractString = '.*?\"name\">(.*?)</.*', authorAffiliationIndex = '.*?<sup>(.*?)</sup>.*',
-              affiliationNodes = ".wd-jnl-art-author-affiliations",affiliationSplit = "</sup>", affiliationExtractString = ".*sup>.*</sup>.*", 
-              institutionSearch = "^citation_author_institution$", doiSearch="^citation_doi$",
-              dateSearch="^citation_publication_date$", emailSearch = "^citation_author_email$", websiteLayout = "character")
+?sapply
+con <- dbConnect(MySQL(), user="root", 
+                 dbname="charles", host="localhost",client.flag=CLIENT_MULTI_STATEMENTS)
+dbListTables(con)
+dbWriteTable(con,"south_africa_clinical_facilities",facility.dataframe,overwrite=T)
+    dbDisconnect(con)
 
 
-#get base by looking at the page info
-
-# MNRAS 300 is ~1998
-# MNRAS 325 11 August 2001
-# MNRAS 400 is ~2004
-
-# extract the html links for the abstracts of 
-#MNRAS,
-abstractLinksmnras <- getWebPageDataJournal(mnras,500)
-#Astrononmy and Astrophysics, 
-abstractLinksaa <- getWebPageDataJournal(astast,500)
-#and Atrophysical Journal
-abstractLinksapj <- getWebPageDataJournal(astApj,500)
-
-
-#Parse the abstracts to produce a dataframe containing
-#[1] "author"       "affiliation1" "affiliation2" "affiliation3" "affiliation4" "affiliation5"
-#[7] "doi"          "authorEmail"  "abstractURL"  "date"         "webpage"      "email"  
-mnrasData<- parseAbstracts(mnras,abstractLinksmnras,5)
-#mnrasData<- parseAbstracts(mnras,abstractLinksmnras[1:1270],length(abstractLinksmnras[1:1270]))
-
-aaData<- parseAbstracts(astast,abstractLinksaa,380)
-apjData<- parseAbstracts(astApj,abstractLinksapj,3)
-#apj needs a different routine for handling the data
-apjData<- parseAbstracts2(astApj,abstractLinksapj,6)
-
-#glob2rx("/aa/abs/*aa*.html")
-#ddEdges <- data.frame(V1= character(0), V2= character(0))
-
-#sort the affiliations nicely so it combines affiliations that are close in name
-mnrasData<-sortAffiliations(mnrasData)
-#extract the graph edges from the dataframe
-ddEdgesMNRASAuthor<-edges(mnrasData,"author")
-ddEdgesAffiliation1<-edges(mnrasData,"affiliation1")
-
-#MNRAS March 21, 2000 -> 
-#This is from saved date
-load('ddEdgesMNRAS.rdata')
-write.csv(ddEdgesMNRAS,"MNRAS_edges.csv")
-
-
-
-affiliations<-apjData$affiliation1[V(g)]
-  
   
  
   
